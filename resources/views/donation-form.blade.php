@@ -10,6 +10,7 @@
     <!-- Styles / Scripts -->
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
+
 <body class="bg-[#FDFDFC] text-[#1b1b18] flex p-6 lg:p-8 items-center lg:justify-center min-h-screen flex-col">
     <div class="max-w-3xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
         <h1 class="text-3xl font-bold mb-8 text-center">Patenschaft abschließen</h1>
@@ -102,25 +103,45 @@
 
             {{-- Spendenbetrag --}}
             <div>
-                <h2 class="text-xl font-semibold mb-4">Spendenbetrag</h2>
+                <h2 class="text-xl font-semibold mb-4">Monatlicher Spendenbetrag</h2>
 
                 <div class="flex flex-wrap gap-3">
                     @foreach ([7.50, 12.50, 15.00, 25.00, 50.00] as $preset)
                     <label class="inline-flex items-center">
                         <input type="radio" name="amount" value="{{ $preset }}"
-                            class="text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                            @checked(old('amount')==$preset)>
-                        <span class="ml-2">{{ number_format($preset, 2, ',', '.') }} €</span>
+                            class="text-indigo-600 border-gray-300 focus:ring-indigo-500 preset-amount-radio"
+                            @checked(old('amount') == $preset && !old('custom_amount'))>
+                        <span class="ml-2" data-monthly-value="{{ $preset }}">
+                            {{ number_format($preset, 2, ',', '.') }} €
+                        </span>
                     </label>
                     @endforeach
+
+                    <label class="inline-flex items-center">
+                        <input type="radio" name="amount_type_selector"
+                            id="custom_amount_radio_trigger"
+                            class="text-indigo-600 border-gray-300 focus:ring-indigo-500"
+                            @checked(old('custom_amount'))>
+                        <span class="ml-2">Eigener Betrag</span>
+                    </label>
                 </div>
 
-                <div class="mt-4">
-                    <label for="custom_amount" class="block text-sm font-medium text-gray-700">Oder eigener Betrag (mind. 7,50 €)</label>
+                <div class="mt-4 @if(!old('custom_amount')) hidden @endif" id="custom_amount_wrapper">
+                    {{-- NEU: id="custom_amount_label" hinzugefügt --}}
+                    <label for="custom_amount" id="custom_amount_label" class="block text-sm font-medium text-gray-700">
+                        Oder eigener Betrag (mind. 7,50 €)
+                    </label>
                     <input type="number" name="custom_amount" id="custom_amount" step="0.01" min="7.50"
                         value="{{ old('custom_amount') }}"
                         class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
                 </div>
+                
+                @error('amount')
+                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                @enderror
+                @error('custom_amount')
+                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                @enderror
             </div>
 
             {{-- Zahlungsintervall --}}
@@ -130,14 +151,15 @@
                     <label class="inline-flex items-center">
                         <input type="radio" name="interval" value="monthly" required
                             class="text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                            @checked(old('interval')==='monthly' )>
+                            @checked(old('interval', 'monthly') === 'monthly' )>
                         <span class="ml-2">Monatlich</span>
                     </label>
                     <label class="inline-flex items-center">
                         <input type="radio" name="interval" value="yearly" required
                             class="text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                            @checked(old('interval')==='yearly' )>
-                        <span class="ml-2">Jährlich</span>
+                            @checked(old('interval') === 'yearly' )>
+                        {{-- HIER WIRD DER JÄHRLICHE PREIS EINGEFÜGT --}}
+                        <span class="ml-2">Jährlich</span> 
                     </label>
                 </div>
                 @error('interval')
@@ -181,6 +203,113 @@
             </div>
         </form>
     </div>
+{{-- NEU: JavaScript für Umschalt-Logik UND Intervall-Preis-Anzeige --}}
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            
+            // --- Logik für Betrags-Typ (Preset vs. Custom) ---
+            const presetRadios = document.querySelectorAll('.preset-amount-radio');
+            const customRadioTrigger = document.getElementById('custom_amount_radio_trigger');
+            const customAmountWrapper = document.getElementById('custom_amount_wrapper');
+            const customAmountInput = document.getElementById('custom_amount');
+            
+            // Für die Preis-Anzeige der Presets: Wir müssen den ursprünglichen Text speichern,
+            // um ihn bei einem Wechsel des Custom-Feldes wiederherzustellen.
+            const presetPriceSpans = document.querySelectorAll('span[data-monthly-value]');
+            const presetOriginalTexts = {};
+            presetPriceSpans.forEach(span => {
+                presetOriginalTexts[span.dataset.monthlyValue] = span.textContent;
+            });
+            
+            // Die Logik für die Sichtbarkeit des Custom-Feldes bleibt unverändert
+            function toggleCustomAmountVisibility() {
+                if (customRadioTrigger.checked) {
+                    customAmountWrapper.classList.remove('hidden');
+                    presetRadios.forEach(radio => radio.checked = false);
+                } else {
+                    customAmountWrapper.classList.add('hidden');
+                    customAmountInput.value = ''; 
+                }
+                // Bei jeder Umschaltung die jährliche Anzeige aktualisieren
+                updateIntervalPriceDisplay(); 
+            }
+
+            customRadioTrigger.addEventListener('change', toggleCustomAmountVisibility);
+            presetRadios.forEach(radio => {
+                radio.addEventListener('change', function() {
+                    if (this.checked) {
+                        customRadioTrigger.checked = false;
+                        toggleCustomAmountVisibility();
+                    }
+                });
+            });
+
+
+            // --- NEU: Logik für Intervall-Preis-Anzeige ---
+            const intervalRadios = document.querySelectorAll('input[name="interval"]');
+            // NEU: Selektor für das 'Jährlich'-Label
+            const yearlyLabelSpan = document.querySelector('input[value="yearly"]').nextElementSibling;
+            
+            const minMonthlyAmount = 7.50;
+            const yearlyOriginalText = 'Jährlich';
+
+            // Helper-Funktion zur Währungsformatierung
+            function formatCurrency(value) {
+                return value.toLocaleString('de-DE', {
+                    style: 'currency',
+                    currency: 'EUR',
+                    minimumFractionDigits: 2
+                });
+            }
+
+            // Funktion zum Ermitteln des aktuell ausgewählten Monatsbetrags
+            function getSelectedMonthlyAmount() {
+                // 1. Check Custom Amount
+                if (!customAmountWrapper.classList.contains('hidden') && customAmountInput.value) {
+                    return parseFloat(customAmountInput.value);
+                }
+                
+                // 2. Check Preset Amount
+                const selectedPreset = document.querySelector('input[name="amount"]:checked');
+                if (selectedPreset) {
+                    return parseFloat(selectedPreset.value);
+                }
+
+                // 3. Fallback: Kein Betrag ausgewählt, wir nehmen den minimalen Monatsbetrag
+                return minMonthlyAmount;
+            }
+
+            // Funktion zum Aktualisieren des Preises hinter "Jährlich"
+            function updateIntervalPriceDisplay() {
+                const selectedInterval = document.querySelector('input[name="interval"]:checked').value;
+                const monthlyAmount = getSelectedMonthlyAmount();
+                
+                if (selectedInterval === 'yearly' || document.querySelector('input[value="yearly"]').checked) {
+                    const yearlyAmount = monthlyAmount * 12;
+                    // Aktualisiert nur den Text des "Jährlich"-Labels
+                    yearlyLabelSpan.textContent = `${yearlyOriginalText} (${formatCurrency(yearlyAmount)})`;
+                } else {
+                    // Setzt den Text des "Jährlich"-Labels zurück, wenn Monatlich ausgewählt ist
+                    yearlyLabelSpan.textContent = yearlyOriginalText;
+                }
+                
+                // Die Monatsbeträge in den Radio-Buttons bleiben unverändert, 
+                // da die Logik für Monatsbetrag/Jahresbetrag entfernt wurde.
+            }
+
+            // Event-Listener für Intervall-Radios
+            intervalRadios.forEach(radio => {
+                radio.addEventListener('change', updateIntervalPriceDisplay);
+            });
+            
+            // Event-Listener für Betrags-Änderungen (Preset oder Custom Input)
+            presetRadios.forEach(radio => radio.addEventListener('change', updateIntervalPriceDisplay));
+            customAmountInput.addEventListener('input', updateIntervalPriceDisplay);
+            
+            // Initialen Aufruf beim Laden der Seite
+            updateIntervalPriceDisplay(); 
+        });
+    </script>
 </body>
 
 </html>
